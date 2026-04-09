@@ -54,4 +54,7 @@ xcuserdata/
 # End of https://www.toptal.com/developers/gitignore/api/macos,xcode
 
 # Custom
-.env
+## secrets for building and testing locally
+.secrets
+# used for building and testing locally with act
+event-tag.json
