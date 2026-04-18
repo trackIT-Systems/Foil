@@ -6,7 +6,7 @@
 import Foundation
 
 struct GitHubLatestReleaseDTO: Decodable {
-    let tagName: String
+    let name: String
     let htmlUrl: String
 }
 
@@ -43,7 +43,7 @@ enum GitHubLatestReleaseError: LocalizedError, Equatable {
 struct GitHubLatestReleaseClient: Sendable {
     private let session: URLSession
 
-    init(session: URLSession = .shared) {
+    init(session: URLSession = URLSession(configuration: .default)) {
         self.session = session
     }
 

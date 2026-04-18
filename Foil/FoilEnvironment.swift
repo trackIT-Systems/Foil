@@ -15,7 +15,7 @@ final class FoilEnvironment: ObservableObject {
     private(set) lazy var quickPanel = QuickCapturePanelController(environment: self)
 
     init() {
-        appUpdate = AppUpdateController(config: config)
+        appUpdate = AppUpdateController(config: config, client: GitHubLatestReleaseClient(), defaults: .standard)
         config.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)

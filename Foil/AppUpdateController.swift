@@ -47,7 +47,7 @@ final class AppUpdateController: ObservableObject {
     /// Prevents duplicate automatic launch requests when both the main window and menu bar attach.
     private var didScheduleInitialAutomaticCheck = false
 
-    init(config: PlaneConfigStore, client: GitHubLatestReleaseClient = GitHubLatestReleaseClient(), defaults: UserDefaults = .standard) {
+    init(config: PlaneConfigStore, client: GitHubLatestReleaseClient, defaults: UserDefaults) {
         self.config = config
         self.client = client
         self.defaults = defaults
@@ -137,14 +137,14 @@ final class AppUpdateController: ObservableObject {
             )
             guard !Task.isCancelled else { return }
 
-            guard let remoteParsed = MarketingVersion.parseFromGitTag(dto.tagName) else {
+            guard let remoteParsed = MarketingVersion.parseFromGitTag(dto.name) else {
                 throw GitHubLatestReleaseError.decodingFailed
             }
             guard let localParsed = MarketingVersion(parsing: bundleVersion) else {
                 throw GitHubLatestReleaseError.invalidResponse
             }
 
-            let displayVersion = dto.tagName.trimmingCharacters(in: .whitespacesAndNewlines).drop(while: { $0 == "v" || $0 == "V" })
+            let displayVersion = dto.name.trimmingCharacters(in: .whitespacesAndNewlines).drop(while: { $0 == "v" || $0 == "V" })
             let display = String(displayVersion)
 
             let now = Date()
@@ -167,14 +167,14 @@ final class AppUpdateController: ObservableObject {
             storedOutcome = outcome
             saveSnapshot(outcome)
             refreshFailureMessage = nil
-            FoilLog.app("update check OK — local=\(bundleVersion) remoteTag=\(dto.tagName) update=\(outcome.isUpdateAvailable) kind=\(String(describing: kind))")
+            FoilLog.app("update check OK — local=\(bundleVersion) remoteTag=\(dto.name) update=\(outcome.isUpdateAvailable) kind=\(String(describing: kind))")
         } catch let gh as GitHubLatestReleaseError {
             if Task.isCancelled { return }
             applyFailure(gh.localizedDescription)
-            FoilLog.app("update check failed (GitHub error): \(gh.localizedDescription ?? "")")
+            FoilLog.app("update check failed (GitHub error): \(gh.localizedDescription)")
         } catch {
             if Task.isCancelled { return }
-            applyFailure(GitHubLatestReleaseError.invalidResponse.localizedDescription ?? "Unknown error")
+            applyFailure(GitHubLatestReleaseError.invalidResponse.localizedDescription)
             FoilLog.app("update check failed: \(error.localizedDescription)")
         }
 

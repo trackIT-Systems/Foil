@@ -22,8 +22,8 @@ struct MarketingVersion: Comparable, Equatable {
     }
 
     /// Strips a single leading `v` or `V`, then parses dotted numeric segments.
-    static func parseFromGitTag(_ tagName: String) -> MarketingVersion? {
-        var s = tagName.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func parseFromGitTag(_ name: String) -> MarketingVersion? {
+        var s = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.first == "v" || s.first == "V" { s.removeFirst() }
         return MarketingVersion(parsing: s)
     }
