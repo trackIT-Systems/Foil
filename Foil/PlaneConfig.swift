@@ -129,6 +129,14 @@ struct HotkeyDefinition: Equatable, Codable {
     }
 }
 
+/// Which destination is selected in the quick capture panel (persisted).
+enum QuickCaptureMode: String, Codable, CaseIterable, Identifiable {
+    case workItem
+    case intake
+
+    var id: String { rawValue }
+}
+
 @MainActor
 final class PlaneConfigStore: ObservableObject {
     private let defaults = UserDefaults.standard
@@ -140,6 +148,7 @@ final class PlaneConfigStore: ObservableObject {
         static let showInDock = "foil.showInDock"
         static let showInMenuBar = "foil.showInMenuBar"
         static let quickCaptureHotkey = "foil.quickCaptureHotkey"
+        static let quickCaptureMode = "foil.quickCaptureMode"
         static let autoCheckForUpdates = "foil.autoCheckForUpdates"
     }
 
@@ -177,6 +186,14 @@ final class PlaneConfigStore: ObservableObject {
 
     /// Alias used by hotkey installation (`FoilEnvironment`).
     var hotkey: HotkeyDefinition { quickCaptureHotkey }
+
+    /// Last-used quick capture tab (work item vs intake).
+    @Published var quickCaptureMode: QuickCaptureMode {
+        didSet {
+            guard oldValue != quickCaptureMode else { return }
+            defaults.set(quickCaptureMode.rawValue, forKey: Keys.quickCaptureMode)
+        }
+    }
 
     @Published var onboardingComplete: Bool {
         didSet { defaults.set(onboardingComplete, forKey: Keys.onboardingComplete) }
@@ -216,7 +233,15 @@ final class PlaneConfigStore: ObservableObject {
         onboardingComplete = defaults.bool(forKey: Keys.onboardingComplete)
         let hotkeyInit = Self.loadHotkey() ?? .default
         _quickCaptureHotkey = Published(initialValue: hotkeyInit)
+        _quickCaptureMode = Published(initialValue: Self.loadQuickCaptureMode())
         _autoCheckForUpdates = Published(initialValue: defaults.object(forKey: Keys.autoCheckForUpdates) as? Bool ?? true)
+    }
+
+    private static func loadQuickCaptureMode() -> QuickCaptureMode {
+        guard let raw = UserDefaults.standard.string(forKey: Keys.quickCaptureMode),
+              let mode = QuickCaptureMode(rawValue: raw)
+        else { return .workItem }
+        return mode
     }
 
     private static func loadHotkey() -> HotkeyDefinition? {

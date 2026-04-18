@@ -46,11 +46,25 @@ final class QuickCaptureViewModel: ObservableObject {
     @Published var isDraft = false
     @Published var createMore = false
 
+    /// Workspace projects from the last successful `listProjects` fetch (unfiltered).
+    private var cachedProjectsRaw: [PlaneProject] = []
+
     init(environment: FoilEnvironment) {
         self.environment = environment
     }
 
+    /// Clears cached project rows so the next `loadProjectsIfNeeded()` hits the API (e.g. after changing list endpoints).
+    func invalidateProjectsCache() {
+        cachedProjectsRaw = []
+        projects = []
+    }
+
     func resetForDisplay() {
+        clearFormForModeSwitch()
+    }
+
+    /// Clears captured fields when the panel opens or when switching work item ↔ intake (mode is unchanged on open).
+    func clearFormForModeSwitch() {
         errorMessage = nil
         partialSuccessMessage = nil
         partialIssueId = nil
@@ -77,23 +91,74 @@ final class QuickCaptureViewModel: ObservableObject {
             errorMessage = PlaneAPIError.notConfigured.localizedDescription
             return
         }
-        if !projects.isEmpty { return }
-        isLoadingProjects = true
-        errorMessage = nil
-        defer { isLoadingProjects = false }
-        do {
-            let raw = try await client.listProjects()
-            projects = raw.filter { $0.isMember != false }
-            FoilLog.ui("Loaded \(projects.count) project(s) in picker")
-            if selectedProjectId == nil || projects.contains(where: { $0.id == selectedProjectId }) == false {
-                selectedProjectId = projects.first?.id
+        if cachedProjectsRaw.isEmpty {
+            isLoadingProjects = true
+            errorMessage = nil
+            defer { isLoadingProjects = false }
+            do {
+                cachedProjectsRaw = try await client.listProjects()
+                FoilLog.ui("Fetched \(cachedProjectsRaw.count) workspace project(s)")
+                await ensureIntakeFlagsFromDetailsIfNeeded(client: client)
+            } catch {
+                FoilLog.ui("loadProjects failed: \(error.localizedDescription)")
+                errorMessage = error.localizedDescription
+                return
             }
-            // Metadata loads from `QuickCreateWorkItemView` via `.task(id: selectedProjectId)` so it runs
-            // when the picker appears (and whenever the user switches projects).
-        } catch {
-            FoilLog.ui("loadProjects failed: \(error.localizedDescription)")
-            errorMessage = error.localizedDescription
         }
+        applyProjectFilterForCurrentMode()
+    }
+
+    /// List responses may omit `intake_view`; detail `GET .../projects/{id}/` includes it (Plane API).
+    func ensureIntakeFlagsFromDetailsIfNeeded() async {
+        guard let client = environment.makeAPIClient() else { return }
+        await ensureIntakeFlagsFromDetailsIfNeeded(client: client)
+    }
+
+    private func ensureIntakeFlagsFromDetailsIfNeeded(client: PlaneAPIClient) async {
+        guard environment.config.quickCaptureMode == .intake else { return }
+        let ambiguous = cachedProjectsRaw.filter { $0.intakeView == nil }
+        guard !ambiguous.isEmpty else { return }
+        FoilLog.ui("Merging intake_view from project details for \(ambiguous.count) project(s)")
+        var detailById: [String: PlaneProject] = [:]
+        await withTaskGroup(of: (String, PlaneProject?).self) { group in
+            for p in ambiguous {
+                group.addTask {
+                    do {
+                        let d = try await client.getProject(projectId: p.id)
+                        return (p.id, d)
+                    } catch {
+                        FoilLog.ui("getProject(\(p.id)) failed: \(error.localizedDescription)")
+                        return (p.id, nil)
+                    }
+                }
+            }
+            for await (id, detail) in group {
+                if let detail { detailById[id] = detail }
+            }
+        }
+        guard !detailById.isEmpty else { return }
+        cachedProjectsRaw = cachedProjectsRaw.map { detailById[$0.id] ?? $0 }
+    }
+
+    /// Rebuilds `projects` for the current quick capture tab (member list vs intake-enabled list).
+    func applyProjectFilterForCurrentMode() {
+        guard !cachedProjectsRaw.isEmpty else {
+            projects = []
+            return
+        }
+        let mode = environment.config.quickCaptureMode
+        let filtered: [PlaneProject]
+        switch mode {
+        case .workItem:
+            filtered = cachedProjectsRaw.filter { $0.isMember != false }
+        case .intake:
+            filtered = cachedProjectsRaw.filter { $0.intakeView == true }
+        }
+        projects = filtered
+        if selectedProjectId == nil || !filtered.contains(where: { $0.id == selectedProjectId }) {
+            selectedProjectId = filtered.first?.id
+        }
+        FoilLog.ui("Project picker [\(mode)]: \(filtered.count) project(s)")
     }
 
     func onProjectChanged() async {
@@ -177,43 +242,69 @@ final class QuickCaptureViewModel: ObservableObject {
         partialSuccessMessage = nil
         partialIssueId = nil
         defer { isSubmitting = false }
-        let point = Int(pointText.trimmingCharacters(in: .whitespacesAndNewlines))
-        let input = WorkItemCreationInput(
-            name: name,
-            description: description,
-            priority: priority == "none" ? nil : priority,
-            stateId: selectedStateId,
-            parentId: selectedParentId,
-            assigneeIds: Array(selectedAssigneeIds),
-            labelIds: Array(selectedLabelIds),
-            typeId: selectedTypeId,
-            cycleId: selectedCycleId,
-            moduleIds: Array(selectedModuleIds),
-            startDate: startDate,
-            targetDate: targetDate,
-            point: point,
-            isDraft: isDraft
-        )
-        let service = WorkItemCreationService(client: client)
-        FoilLog.ui("Submit work item… project=\(projectId) title=\(name.prefix(80))")
-        do {
-            let result = try await service.create(projectId: projectId, input: input)
-            switch result {
-            case .success:
-                FoilLog.ui("Work item created")
+        switch environment.config.quickCaptureMode {
+        case .workItem:
+            let point = Int(pointText.trimmingCharacters(in: .whitespacesAndNewlines))
+            let input = WorkItemCreationInput(
+                name: name,
+                description: description,
+                priority: priority == "none" ? nil : priority,
+                stateId: selectedStateId,
+                parentId: selectedParentId,
+                assigneeIds: Array(selectedAssigneeIds),
+                labelIds: Array(selectedLabelIds),
+                typeId: selectedTypeId,
+                cycleId: selectedCycleId,
+                moduleIds: Array(selectedModuleIds),
+                startDate: startDate,
+                targetDate: targetDate,
+                point: point,
+                isDraft: isDraft
+            )
+            let service = WorkItemCreationService(client: client)
+            FoilLog.ui("Submit work item… project=\(projectId) title=\(name.prefix(80))")
+            do {
+                let result = try await service.create(projectId: projectId, input: input)
+                switch result {
+                case .success:
+                    FoilLog.ui("Work item created")
+                    if createMore {
+                        resetForDisplay()
+                    } else {
+                        onDismissPanel?()
+                    }
+                case let .createdButLinkFailed(id, msg):
+                    FoilLog.ui("Work item created id=\(id) but link failed: \(msg)")
+                    partialIssueId = id
+                    partialSuccessMessage = "Work item was created, but cycle or module linking failed: \(msg)"
+                }
+            } catch {
+                FoilLog.ui("Submit failed: \(error.localizedDescription)")
+                errorMessage = error.localizedDescription
+            }
+        case .intake:
+            let intakeInput = IntakeCreationInput(
+                name: name,
+                description: description,
+                priority: priority == "none" ? nil : priority,
+                assigneeIds: Array(selectedAssigneeIds),
+                labelIds: Array(selectedLabelIds),
+                targetDate: targetDate
+            )
+            let intakeService = IntakeCreationService(client: client)
+            FoilLog.ui("Submit intake… project=\(projectId) title=\(name.prefix(80))")
+            do {
+                try await intakeService.create(projectId: projectId, input: intakeInput)
+                FoilLog.ui("Intake item created")
                 if createMore {
                     resetForDisplay()
                 } else {
                     onDismissPanel?()
                 }
-            case let .createdButLinkFailed(id, msg):
-                FoilLog.ui("Work item created id=\(id) but link failed: \(msg)")
-                partialIssueId = id
-                partialSuccessMessage = "Work item was created, but cycle or module linking failed: \(msg)"
+            } catch {
+                FoilLog.ui("Intake submit failed: \(error.localizedDescription)")
+                errorMessage = error.localizedDescription
             }
-        } catch {
-            FoilLog.ui("Submit failed: \(error.localizedDescription)")
-            errorMessage = error.localizedDescription
         }
     }
 

@@ -16,7 +16,7 @@ final class QuickCapturePanelController {
         self.environment = environment
     }
 
-    /// True when the quick capture panel exists and is on screen (same shortcut toggles closed).
+    /// True when the quick capture panel exists and is on screen (global shortcut switches intake ↔ work item while open).
     var isVisible: Bool { panel?.isVisible == true }
 
     func show() {
@@ -33,7 +33,9 @@ final class QuickCapturePanelController {
                 self?.hide()
             }
             let view = QuickCreateWorkItemView()
+                .environmentObject(environment)
                 .environmentObject(vm)
+                .environmentObject(environment.config)
             let host = NSHostingController(rootView: view)
             let p = NSPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 800, height: 400),
@@ -41,7 +43,7 @@ final class QuickCapturePanelController {
                 backing: .buffered,
                 defer: false
             )
-            p.title = "Create new work item"
+            p.title = Self.panelTitle(for: environment.config.quickCaptureMode)
             p.titlebarAppearsTransparent = true
             p.isFloatingPanel = true
             p.level = .floating
@@ -57,9 +59,28 @@ final class QuickCapturePanelController {
             viewModel = vm
         }
 
+        viewModel?.invalidateProjectsCache()
         viewModel?.resetForDisplay()
+        syncWindowTitleFromConfig()
         Task { await viewModel?.loadProjectsIfNeeded() }
         panel?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Flips work item ↔ intake when the global shortcut fires while the panel is open.
+    /// Side effects (clear form, project list, title) run deferred in `QuickCreateWorkItemView.onChange` to avoid publishing during view updates.
+    func toggleQuickCaptureMode() {
+        environment.config.quickCaptureMode = environment.config.quickCaptureMode == .workItem ? .intake : .workItem
+    }
+
+    func syncWindowTitleFromConfig() {
+        panel?.title = Self.panelTitle(for: environment.config.quickCaptureMode)
+    }
+
+    private static func panelTitle(for mode: QuickCaptureMode) -> String {
+        switch mode {
+        case .workItem: return "Create work item"
+        case .intake: return "Create intake work item"
+        }
     }
 
     func hide() {

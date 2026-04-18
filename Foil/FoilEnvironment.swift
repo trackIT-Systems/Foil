@@ -51,8 +51,8 @@ final class FoilEnvironment: ObservableObject {
         hotkey.register(definition: config.hotkey) { [weak self] in
             guard let self else { return }
             if self.quickPanel.isVisible {
-                FoilLog.hotkey("Global shortcut fired → close quick capture")
-                self.quickPanel.hide()
+                FoilLog.hotkey("Global shortcut fired → toggle quick capture mode")
+                self.quickPanel.toggleQuickCaptureMode()
             } else {
                 FoilLog.hotkey("Global shortcut fired → open quick capture")
                 self.quickPanel.show()

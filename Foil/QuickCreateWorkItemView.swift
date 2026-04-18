@@ -7,6 +7,8 @@ import AppKit
 import SwiftUI
 
 struct QuickCreateWorkItemView: View {
+    @EnvironmentObject private var environment: FoilEnvironment
+    @EnvironmentObject private var config: PlaneConfigStore
     @EnvironmentObject private var viewModel: QuickCaptureViewModel
     @State private var showAssigneePopover = false
     @State private var showLabelPopover = false
@@ -16,12 +18,38 @@ struct QuickCreateWorkItemView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            modePicker
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
             mainContent
-            propertyBar
+            if config.quickCaptureMode == .workItem {
+                workItemPropertyBar
+            } else {
+                intakePropertyBar
+            }
             footer
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onExitCommand { viewModel.cancel() }
+        .onChange(of: config.quickCaptureMode) { _, _ in
+            Task { @MainActor in
+                await viewModel.ensureIntakeFlagsFromDetailsIfNeeded()
+                viewModel.applyProjectFilterForCurrentMode()
+                viewModel.clearFormForModeSwitch()
+                environment.quickPanel.syncWindowTitleFromConfig()
+            }
+        }
+    }
+
+    private var modePicker: some View {
+        Picker("Mode", selection: $config.quickCaptureMode) {
+            Text("Work item").tag(QuickCaptureMode.workItem)
+            Text("Intake").tag(QuickCaptureMode.intake)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .accessibilityLabel("Capture mode")
     }
 
     // MARK: - Main content
@@ -106,7 +134,11 @@ struct QuickCreateWorkItemView: View {
                 Spacer(minLength: 0)
                 ProgressView().controlSize(.mini)
             } else if viewModel.projects.isEmpty {
-                Text("No projects in this workspace")
+                Text(
+                    config.quickCaptureMode == .intake
+                        ? "No projects with Intake enabled"
+                        : "No projects in this workspace"
+                )
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
@@ -130,10 +162,10 @@ struct QuickCreateWorkItemView: View {
         }
     }
 
-    // MARK: - Property chip bar
+    // MARK: - Property chip bar (work item)
     // Order matches Plane UI: Status | Priority | Assignees | Labels | Start | Due | Cycles | Modules | Parent
 
-    private var propertyBar: some View {
+    private var workItemPropertyBar: some View {
         VStack(spacing: 0) {
             Divider().opacity(0.12)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -152,6 +184,64 @@ struct QuickCreateWorkItemView: View {
                 .padding(.vertical, 9)
             }
         }
+    }
+
+    /// Intake: Triage | Priority | Assignees | Labels | Due date (Plane intake create sheet).
+    private var intakePropertyBar: some View {
+        VStack(spacing: 0) {
+            Divider().opacity(0.12)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    triageChip
+                    intakePriorityChip
+                    assigneeChip
+                    labelChip
+                    DateChip(icon: "calendar", placeholder: "Due date", date: $viewModel.targetDate)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+            }
+        }
+    }
+
+    private var triageChip: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "circle.dotted")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Text("Triage")
+                .font(.system(size: 12))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Triage")
+    }
+
+    private var intakePriorityChip: some View {
+        Menu {
+            ForEach(["none", "urgent", "high", "medium", "low"], id: \.self) { p in
+                Button { viewModel.priority = p } label: {
+                    Label(p.capitalized, systemImage: prioritySystemImage(p))
+                }
+            }
+        } label: {
+            chipLabel(
+                systemImage: prioritySystemImage(viewModel.priority),
+                imageColor: priorityColor(viewModel.priority),
+                text: viewModel.priority == "none" ? "None" : viewModel.priority.capitalized
+            )
+        }
+        .menuIndicator(.hidden)
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .chipStyle()
     }
 
     // MARK: - Individual chips
@@ -303,12 +393,10 @@ struct QuickCreateWorkItemView: View {
     }
 
     // MARK: - Footer
-    // Layout: [Spacer] [Create more toggle] [Discard] [Save]
+    // Layout: [Create more] … [Discard] [Create work item] (Plane)
 
     private var footer: some View {
         HStack(spacing: 10) {
-            Spacer()
-
             Toggle(isOn: $viewModel.createMore) {
                 Text("Create more")
                     .font(.system(size: 12))
@@ -316,6 +404,8 @@ struct QuickCreateWorkItemView: View {
             }
             .toggleStyle(.switch)
             .controlSize(.mini)
+
+            Spacer()
 
             Button("Discard") { viewModel.cancel() }
                 .keyboardShortcut(.cancelAction)
@@ -329,10 +419,10 @@ struct QuickCreateWorkItemView: View {
                 if viewModel.isSubmitting {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
-                        Text("Saving…")
+                        Text("Creating…")
                     }
                 } else {
-                    Text("Save")
+                    Text("Create work item")
                 }
             }
             .keyboardShortcut(.defaultAction)

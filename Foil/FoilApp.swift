@@ -69,7 +69,7 @@ private struct FoilMenuBarExtraMenu: View {
     @EnvironmentObject private var environment: FoilEnvironment
 
     var body: some View {
-        Button("Create new work item") {
+        Button("Quick capture") {
             environment.quickPanel.show()
         }
 

@@ -43,6 +43,8 @@ struct PlaneProject: Identifiable, Hashable {
     let logoProps: PlaneLogoProps?
     /// When present (Plane API), `false` means the current user is not a project member.
     let isMember: Bool?
+    /// When `true`, the project has Intake enabled. Plane’s API exposes this as `intake_view` on the model and often as `inbox_view` on serializers (alias for the same field).
+    let intakeView: Bool?
 
     /// Human-readable name for UI (avoids raw UUIDs; some instances omit `name` in list payloads).
     var displayName: String {
@@ -87,8 +89,10 @@ struct PlaneProject: Identifiable, Hashable {
 }
 
 extension PlaneProject: Decodable {
+    /// With `JSONDecoder.convertFromSnakeCase`, keys are matched after conversion (`intake_view` → `intakeView`).
+    /// Do **not** use raw values like `"intake_view"` here — they never match and flags stay `nil`.
     enum CodingKeys: String, CodingKey {
-        case id, name, identifier, emoji, logoProps, iconProp, isMember
+        case id, name, identifier, emoji, logoProps, iconProp, isMember, intakeView, inboxView
     }
 
     init(from decoder: Decoder) throws {
@@ -102,6 +106,23 @@ extension PlaneProject: Decodable {
         let fromIcon = try? c.decode(PlaneLogoProps.self, forKey: .iconProp)
         logoProps = Self.preferredLogoProps(fromLogo, fromIcon)
         isMember = try c.decodeIfPresent(Bool.self, forKey: .isMember)
+        intakeView = Self.decodeIntakeViewFlag(from: c)
+    }
+
+    /// Reads `intake_view` or `inbox_view` (Plane serializers use `inbox_view` as the JSON key for `intake_view`).
+    private static func decodeIntakeViewFlag(from c: KeyedDecodingContainer<CodingKeys>) -> Bool? {
+        for key in [CodingKeys.intakeView, CodingKeys.inboxView] {
+            if let b = try? c.decodeIfPresent(Bool.self, forKey: key) { return b }
+            if let i = try? c.decodeIfPresent(Int.self, forKey: key) { return i != 0 }
+            if let s = try? c.decodeIfPresent(String.self, forKey: key) {
+                switch s.lowercased() {
+                case "true", "1", "yes": return true
+                case "false", "0", "no": return false
+                default: break
+                }
+            }
+        }
+        return nil
     }
 
     /// Picks the richer of two logo blobs (same JSON shape in practice).
@@ -276,11 +297,7 @@ struct PlaneMember: Decodable, Identifiable, Hashable {
     let email: String?
 
     enum CodingKeys: String, CodingKey {
-        case id
-        case displayName = "display_name"
-        case firstName = "first_name"
-        case lastName = "last_name"
-        case email
+        case id, displayName, firstName, lastName, email
     }
 
     var resolvedName: String {
@@ -341,8 +358,7 @@ struct PlaneWorkItemSummary: Identifiable, Hashable {
 
 extension PlaneWorkItemSummary: Decodable {
     enum CodingKeys: String, CodingKey {
-        case id, name
-        case sequenceId = "sequence_id"
+        case id, name, sequenceId
     }
 
     init(from decoder: Decoder) throws {
@@ -417,4 +433,35 @@ struct PlaneCycleIssuesBody: Encodable {
 
 struct PlaneModuleIssuesBody: Encodable {
     let issues: [String]
+}
+
+// MARK: - Create intake issue
+
+/// `POST .../intake-issues/` body (`issue` wraps the nested payload).
+struct PlaneCreateIntakeIssueRequest: Encodable {
+    let issue: PlaneIntakeIssuePayload
+}
+
+struct PlaneIntakeIssuePayload: Encodable {
+    let name: String
+    let description: String?
+    let priority: String?
+    let assignees: [String]?
+    let labels: [String]?
+    let targetDate: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, priority, assignees, labels
+        case targetDate = "target_date"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encodeIfPresent(description, forKey: .description)
+        try c.encodeIfPresent(priority, forKey: .priority)
+        if let assignees, !assignees.isEmpty { try c.encode(assignees, forKey: .assignees) }
+        if let labels, !labels.isEmpty { try c.encode(labels, forKey: .labels) }
+        try c.encodeIfPresent(targetDate, forKey: .targetDate)
+    }
 }

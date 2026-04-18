@@ -97,11 +97,12 @@ final class PlaneAPIClient: @unchecked Sendable {
 
     // MARK: - Paginated GET
 
-    func fetchAllPages<T: Decodable>(_ path: String, perPage: Int = 100) async throws -> [T] {
+    func fetchAllPages<T: Decodable>(_ path: String, perPage: Int = 100, additionalQueryItems: [URLQueryItem] = []) async throws -> [T] {
         var all: [T] = []
         var cursor: String?
         repeat {
             var items: [URLQueryItem] = [URLQueryItem(name: "per_page", value: String(perPage))]
+            items.append(contentsOf: additionalQueryItems)
             if let c = cursor { items.append(URLQueryItem(name: "cursor", value: c)) }
             let u = try url(path: path, queryItems: items)
             let req = authorizedRequest(url: u, method: "GET")
@@ -122,8 +123,21 @@ final class PlaneAPIClient: @unchecked Sendable {
 
     // MARK: - Projects
 
+    /// Documented list endpoint: `GET /api/v1/workspaces/{slug}/projects/` (see Plane API reference).
+    /// The non-standard `.../projects/details/` path returns **404** on `api.plane.so` and must not be used.
     func listProjects() async throws -> [PlaneProject] {
         try await fetchAllPages("/workspaces/\(workspaceSlug)/projects/")
+    }
+
+    /// Single-project fetch (detail serializer may include flags omitted from the list response).
+    func getProject(projectId: String) async throws -> PlaneProject {
+        let u = try url(path: "/workspaces/\(workspaceSlug)/projects/\(projectId)/")
+        let req = authorizedRequest(url: u, method: "GET")
+        let (data, http) = try await data(for: req)
+        guard (200 ... 299).contains(http.statusCode) else {
+            throw PlaneAPIError.httpStatus(http.statusCode, String(data: data, encoding: .utf8))
+        }
+        return try decoder.decode(PlaneProject.self, from: data)
     }
 
     /// Workspace labels; failures are downgraded to empty (some self-hosted builds 500 on this route; unrelated to projects list).
@@ -202,6 +216,17 @@ final class PlaneAPIClient: @unchecked Sendable {
 
     func createWorkItem(projectId: String, body: PlaneCreateWorkItemRequest) async throws -> PlaneWorkItemCreated {
         let u = try url(path: "/workspaces/\(workspaceSlug)/projects/\(projectId)/work-items/")
+        let encoded = try encoder.encode(body)
+        let req = authorizedRequest(url: u, method: "POST", body: encoded)
+        let (data, http) = try await data(for: req)
+        guard http.statusCode == 201 || (200 ... 299).contains(http.statusCode) else {
+            throw PlaneAPIError.httpStatus(http.statusCode, String(data: data, encoding: .utf8))
+        }
+        return try Self.parseCreatedWorkItemPayload(data: data, jsonDecoder: decoder, projectId: projectId)
+    }
+
+    func createIntakeIssue(projectId: String, body: PlaneCreateIntakeIssueRequest) async throws -> PlaneWorkItemCreated {
+        let u = try url(path: "/workspaces/\(workspaceSlug)/projects/\(projectId)/intake-issues/")
         let encoded = try encoder.encode(body)
         let req = authorizedRequest(url: u, method: "POST", body: encoded)
         let (data, http) = try await data(for: req)
