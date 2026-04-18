@@ -35,6 +35,13 @@ struct SettingsView: View {
     }
 
     /// True when drafts differ from persisted config (including a non-empty token field).
+    private var autoCheckForUpdatesBinding: Binding<Bool> {
+        Binding(
+            get: { environment.config.autoCheckForUpdates },
+            set: { environment.config.autoCheckForUpdates = $0 }
+        )
+    }
+
     private var hasUnsavedChanges: Bool {
         let c = environment.config
         if draftShowInDock != c.showInDock { return true }
@@ -123,6 +130,39 @@ struct SettingsView: View {
                     .onChange(of: draftToken) { _, _ in clearSaveFeedback() }
             }
 
+            Section("Updates") {
+                Toggle("Automatically check for updates", isOn: autoCheckForUpdatesBinding)
+                    .toggleStyle(.checkbox)
+                    .onChange(of: environment.config.autoCheckForUpdates) { _, enabled in
+                        if enabled {
+                            environment.appUpdate.scheduleStaleCheckWhenSettingsAppear()
+                        }
+                    }
+                updatesStatusBlock
+                if let outcome = environment.appUpdate.storedOutcome, outcome.isUpdateAvailable {
+                    Button("Download on GitHub") {
+                        environment.appUpdate.openDownloadPageFromStoredOutcome()
+                    }
+                }
+                if !environment.config.autoCheckForUpdates {
+                    Button("Check for updates") {
+                        environment.appUpdate.checkFromUserButton()
+                    }
+                    .disabled(environment.appUpdate.isChecking)
+                }
+                if let refresh = environment.appUpdate.refreshFailureMessage {
+                    Text(refresh)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if environment.config.autoCheckForUpdates {
+                        Button("Retry") {
+                            environment.appUpdate.checkFromUserButton()
+                        }
+                        .disabled(environment.appUpdate.isChecking)
+                    }
+                }
+            }
+
             Section {
                 HStack {
                     Button("Sign out", role: .destructive) {
@@ -152,10 +192,11 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 520)
+        .frame(width: 480, height: 600)
         .onAppear {
             loadDraftsFromConfig()
             syncLaunchAtLoginFromSystem()
+            environment.appUpdate.scheduleStaleCheckWhenSettingsAppear()
         }
         .onChange(of: appearsActive) { _, active in
             guard active else { return }
@@ -167,6 +208,45 @@ struct SettingsView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private var updatesStatusBlock: some View {
+        let u = environment.appUpdate
+        if u.isChecking {
+            Text("Checking for updates…")
+                .foregroundStyle(.secondary)
+        } else if let outcome = u.storedOutcome {
+            if outcome.isUpdateAvailable {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text("A newer version is available:")
+                        Text(outcome.remoteVersionDisplay)
+                            .fontWeight(.semibold)
+                    }
+                    Text("Last checked: \(Self.shortDateTime.string(from: outcome.lastChecked))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("You’re on the latest version.")
+                    Text("Last checked: \(Self.shortDateTime.string(from: outcome.lastChecked))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } else {
+            Text("Update status will appear after a check.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private static let shortDateTime: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
 
     private func clearSaveFeedback() {
         saveError = nil

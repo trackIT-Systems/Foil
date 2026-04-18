@@ -30,13 +30,25 @@ struct FoilApp: App {
                     appDelegate.environment = environment
                     FoilLog.app("Main window appeared — installing global shortcut if configured")
                     environment.installHotkeyFromConfig()
+                    environment.appUpdate.scheduleAutomaticLaunchCheck()
                 }
         }
         .defaultSize(width: 520, height: 440)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    environment.appUpdate.checkFromAppMenu()
+                }
+            }
+        }
 
         MenuBarExtra(isInserted: showInMenuBarBinding) {
             FoilMenuBarExtraMenu()
                 .environmentObject(environment)
+                .onAppear {
+                    appDelegate.environment = environment
+                    environment.appUpdate.scheduleAutomaticLaunchCheck()
+                }
         } label: {
             Image("MenuBarIcon")
                 .renderingMode(.template)

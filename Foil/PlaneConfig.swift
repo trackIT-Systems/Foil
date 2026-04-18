@@ -140,6 +140,7 @@ final class PlaneConfigStore: ObservableObject {
         static let showInDock = "foil.showInDock"
         static let showInMenuBar = "foil.showInMenuBar"
         static let quickCaptureHotkey = "foil.quickCaptureHotkey"
+        static let autoCheckForUpdates = "foil.autoCheckForUpdates"
     }
 
     /// Call early (e.g. `applicationWillFinishLaunching`) so reads use correct defaults before first `PlaneConfigStore` init.
@@ -147,6 +148,7 @@ final class PlaneConfigStore: ObservableObject {
         UserDefaults.standard.register(defaults: [
             Keys.showInDock: true,
             Keys.showInMenuBar: false,
+            Keys.autoCheckForUpdates: true,
         ])
     }
 
@@ -196,6 +198,13 @@ final class PlaneConfigStore: ObservableObject {
         }
     }
 
+    @Published var autoCheckForUpdates: Bool {
+        didSet {
+            guard oldValue != autoCheckForUpdates else { return }
+            defaults.set(autoCheckForUpdates, forKey: Keys.autoCheckForUpdates)
+        }
+    }
+
     init() {
         Self.registerAppPresenceDefaults()
         let dockInit = defaults.bool(forKey: Keys.showInDock)
@@ -207,6 +216,7 @@ final class PlaneConfigStore: ObservableObject {
         onboardingComplete = defaults.bool(forKey: Keys.onboardingComplete)
         let hotkeyInit = Self.loadHotkey() ?? .default
         _quickCaptureHotkey = Published(initialValue: hotkeyInit)
+        _autoCheckForUpdates = Published(initialValue: defaults.object(forKey: Keys.autoCheckForUpdates) as? Bool ?? true)
     }
 
     private static func loadHotkey() -> HotkeyDefinition? {

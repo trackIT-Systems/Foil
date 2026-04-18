@@ -9,12 +9,17 @@ import SwiftUI
 @MainActor
 final class FoilEnvironment: ObservableObject {
     var config = PlaneConfigStore()
+    let appUpdate: AppUpdateController
     private var cancellables = Set<AnyCancellable>()
     private let hotkey = HotkeyManager()
     private(set) lazy var quickPanel = QuickCapturePanelController(environment: self)
 
     init() {
+        appUpdate = AppUpdateController(config: config)
         config.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        appUpdate.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
     }
